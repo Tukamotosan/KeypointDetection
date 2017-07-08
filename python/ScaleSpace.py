@@ -4,103 +4,112 @@ import cv2
 import numpy as np
 import pprint
 
-def f_s(t, T):
-    """
-    function S in Algorithm 2
-    :param t:
-    :param T:
-    :return:
-    """
-    t1 = t % (2*T)
-    t2 = (2*T - 1 - t) % (2*T)
-    return min([t1, t2])
+class ScaleSpace(object):
+    def __init__(self, K = 3, O = 8, sigma_0 = 0.8, delta_0 = 0.5):
+        """
+        This class is model of Gaussian Scale space
+        :param K: number of scales per octave
+        :param O: number of octaves
+        :param sigma_0: initial value of sigma
+        :param delta_0 initial ratio of subsampling image
+        """
+        self.K = K
+        self.O = O
+        self.sigma_0 = sigma_0
+        self.delta_0 = delta_0
+        self.image_0 = None
+        self.images = {}
 
-def f_u_bar(k, l, M, N, img):
-    """
-    function u^bar in Algorithm 2
-    :param k:
-    :param l:
-    :param M:
-    :param N:
-    :param img:
-    :return:
-    """
-    sMk = f_s(k, M)
-    sNl = f_s(l, N)
-    return img[int(sNl), int(sMk)]
+    def generate(self, image_in):
+        """
+        generate gaussian scale space
+        :param image_in:
+        :return:
+        """
+        # initialize this object
+        self._init(image_in)
 
-def bilinear_interpolation(img_src, delta_dash):
-    """
-    Algorithm 2 Bilinear interpolation of an image
-    :param img_src:
-    :param delta_dash:
-    :return:
-    """
-    if delta_dash == 1.0:
-        return img_src.copy()
+        # generate uin
+        self.image_0 = self._gen_image_0(image_in, self.delta_0)
+        cv2.imwrite("./data/lena_std_org.tif", self.image_0)
 
-    N,M = img_src.shape[:2]
-    Ndash,Mdash = float(int(N/delta_dash)), float(int(M/delta_dash))
-    img = np.zeros((int(Ndash), int(Mdash), 1), np.uint8)
+        # generate each octave
+        for o in range(self.O):
 
-    for m_dash in range(int(Mdash)):
-        for n_dash in range(int(Ndash)):
-            x, y = delta_dash*m_dash, delta_dash*n_dash
-            x_floor, y_floor = float(int(x)), float(int(y))
-            img[n_dash, m_dash] =   (x - x_floor)    *(y - y_floor)    *f_u_bar(x_floor + 1, y_floor + 1, M, N, img_src) + \
-                                    (1 + x_floor - x)*(y - y_floor)    *f_u_bar(x_floor,     y_floor + 1, M, N, img_src) + \
-                                    (x - x_floor)    *(1 + y_floor - y)*f_u_bar(x_floor + 1, y_floor,     M, N, img_src) + \
-                                    (1 + x_floor - x)*(1 + y_floor - y)*f_u_bar(x_floor,     y_floor,     M, N, img_src)
+            # set 1st image in o th octave
+            if o == 0:
+                self.images[o][0] = self._do_gaussian(self.image_0, self.sigma_0)
+            else:
+                self.images[o][0] = self._gen_image_0(self.images[o-1][self.K], o+1)
 
+            cv2.imwrite("./data/g_scale_space/lena_std_" + str(o) + "_" + str(0) + ".tif", self.images[o][0])
 
+            for k in range(1, self.K + 3):
+                sigma = np.float_power(2.0, float(k)/float(self.K)) * self.sigma_0
+                self.images[o][k] = self._do_gaussian(self.images[o][k-1], sigma)
+                cv2.imwrite("./data/g_scale_space/lena_std_" + str(o) + "_" + str(k) + ".tif", self.images[o][k])
 
-    return img
+    def _gen_image_0(self, image, delta_0):
+        """
 
-def gen_scale_space(img, sigma, O, K):
-    """
+        :param image:
+        :param delta_0:
+        :return:
+        """
+        h0, w0 = image.shape[:2]
+        h, w = int(h0/delta_0), int(w0/delta_0)
+        image_0 = cv2.resize(image, (h, w), interpolation=cv2.INTER_LINEAR)
+        return image_0
 
-    :param img:
-    :param sigma:
-    :param O: number of octave
-    :param K: number of images at each scale space
-    :return:
-    """
-    scale_space = []
-    img0 = img.copy()
+    def _do_gaussian(self, image, sigma):
+        """
 
-    for o in range(1, O+1):
-        img0 = bilinear_interpolation(img0, float(o))
-        vec = [img0]
-        for k in range(1, K+1):
-            print(str(k))
-        scale_space.append(vec)
-    return scale_space
+        :param image:
+        :param sigma:
+        :return:
+        """
+        #return cv2.GaussianBlur(image, (length, length), sigma)
 
+        kernel = []
+        y_min = -4.0*sigma
+        x_min = -4.0*sigma
+        length = 2*int(4*sigma)+1
+        a = 1.0/(2.0*np.pi*sigma*sigma)
+        b = -1.0/(2.0*sigma*sigma)
 
-def main():
-    path_src = "../images/lena_std.tif"
+        for row in range(length):
+            rows = []
+            y = float(row) + y_min
+            y2 = y*y
+            for col in range(length):
+                x = float(col) + x_min
+                x2 = x*x
+                gauss = a*np.exp(b*(x2 + y2))
+                rows.append(gauss)
+            kernel.append(rows)
 
-    # load image
-    img_src = cv2.imread(path_src, 1)
+        return cv2.filter2D(image, -1, np.array(kernel))
 
-    # convert from RGB to grayscale
-    img_gry = cv2.cvtColor(img_src, cv2.COLOR_RGB2GRAY)
+    def _init(self, image):
+        """
+        initialize images
+        :return:
+        """
+        o_max = self.O
+        h0, w0 = image.shape[:2]
+        h, w = int(h0 / self.delta_0), int(w0 / self.delta_0)
 
-    # bilinear interpolation
-    delta_dash = 0.8
-    img_org = bilinear_interpolation(img_gry, delta_dash)
+        for o in range(self.O):
+            o_dash = o + 1
+            h_dash, w_dash = int(h/o_dash), int(w/o_dash)
+            pprint.pprint([h_dash, w_dash])
+            if h_dash == 0 or w_dash == 0:
+                o_max = o - 1
+        self.O = o_max - 1
 
-    cv2.imwrite(path_src + "_org.tif", img_org)
-
-    # scale space
-    sigma_in = 0.5
-    K = 3
-    O = 5
-    scale_space = gen_scale_space(img_org, sigma_in, O, K)
-
-    # cv2.imshow("Image", img_gry)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
-
-if __name__ == "__main__":
-    main()
+        # init O
+        for o in range(self.O):
+            dic = {}
+            for k in range(self.K+2):
+                dic[k] = None
+            self.images[o] = dic
